@@ -1,0 +1,110 @@
+#cloud-config
+# vim: syntax=yaml
+#
+# curl -LO https://github.com/hypriot/flash/releases/download/2.3.0/flash
+# chmod +x flash
+# ./flash -u nas.yaml -d /dev/mmcblk0 -f hypriotos-rpi-v1.11.4.img
+#
+# see configuration options https://cloudinit.readthedocs.io/en/18.3/
+
+# set hostname and update hosts-file entries
+hostname: nas
+manage_etc_hosts: true
+# preserve adding debian.org to apt mirrors
+apt_preserve_sources_list: true
+
+# modify user information
+users:
+  - name: pirate
+    gecos: "netzfisch"
+    sudo: ALL=(ALL) NOPASSWD:ALL
+    shell: /bin/bash
+    groups: users,docker,video
+    plain_text_passwd: hypriot
+    lock_passwd: false
+    ssh_pwauth: true
+    chpasswd: { expire: false }
+    ssh-authorized-keys:
+    - ssh-rsa aaaa....==
+
+package_update: true
+package_upgrade: false
+package_reboot_if_required: false
+packages:
+  - mc
+  - mdadm
+  - samba
+  - samba-common-bin
+
+timezone: "Europe/Berlin"
+#locale: "en_US.UTF-8"
+
+# device_aliases:
+#     <alias name>: <device path>
+# disk_setup:
+#     <alias name/path>:
+#         table_type: <'mbr'/'gpt'>
+#         layout:
+#             - [33,82]
+#             - 66
+#         overwrite: <true/false>
+# fs_setup:
+#     - label: <label>
+#       filesystem: <filesystem type>
+#       device: <device>
+#       partition: <"auto"/"any"/"none"/<partition number>>
+#       overwrite: <true/false>
+#       replace_fs: <filesystem type>
+
+write_files:
+  # set static IP address
+  - content: |
+      # see configuration options via 'man dhcpcd.conf'
+      hostname
+      persistent
+      slaac private
+
+      interface eth0
+      static ip_address=192.168.1.23
+      # static ip6_address=fd51:42f8:caae:d92e::ff/64
+      static routers=192.168.1.13
+      static domain_name_servers=192.168.1.13 8.8.8.8
+    path: /etc/dhcpcd.conf
+
+  # configure SAMBA shares
+  - content: |
+      [shared]
+      path=/mnt/raid1/shared
+      writeable=Yes
+      create mask=0777
+      directory mask=0777
+      public=no
+    path: /etc/samba/smb.conf
+
+bootcmd:
+  # poor-mans-fix according issue https://github.com/hypriot/image-builder-rpi/issues/304
+  # check also pull request https://github.com/hypriot/flash/pull/152
+  - 'date >> /var/log/cloud-init-output.log'
+  - 'date -s "2019-12-09 22:47:00"'
+
+# these commands will run once on first boot only
+runcmd:
+  # pickup hostname changes
+  - 'systemctl restart avahi-daemon'
+
+  # configure RAID disks
+  - mdadm --create --verbose /dev/md0 --level=mirror --raid-devices=2 /dev/sda1 /dev/sdb1
+  - mkdir -p /mnt/raid1
+  - mkfs.ext4 /dev/md0
+  - mount /dev/md0 /mnt/raid1/
+  - ls -l /mnt/raid1/
+
+  - echo '/dev/md0 /mnt/raid1/ ext4 defaults,noatime 0 1' >> /etc/fstab
+  - mdadm --detail --scan | tee -a /etc/mdadm/mdadm.conf
+
+  # configure SAMBA shares
+  - mkdir /mnt/raid1/shared
+  - chmod -R 777 /mnt/raid1/shared
+  - systemctl restart smbd
+
+final_message: "The system is finally up, after $UPTIME seconds"
