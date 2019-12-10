@@ -1,0 +1,72 @@
+#cloud-config
+# vim: syntax=yaml
+#
+# curl -LO https://github.com/hypriot/flash/releases/download/2.3.0/flash
+# chmod +x flash
+# ./flash -u nas.yaml -d /dev/mmcblk0 -f hypriotos-rpi-v1.11.4.img
+#
+# see configuration options https://cloudinit.readthedocs.io/en/18.3/
+
+# set hostname and update hosts-file entries
+hostname: black-pearl
+manage_etc_hosts: true
+# preserve adding debian.org to apt mirrors
+apt_preserve_sources_list: true
+
+# modify user information
+users:
+  - name: pirate
+    gecos: "netzfisch"
+    sudo: ALL=(ALL) NOPASSWD:ALL
+    shell: /bin/bash
+    groups: users,docker,video
+    plain_text_passwd: hypriot
+    lock_passwd: false
+    ssh_pwauth: true
+    chpasswd: { expire: false }
+    ssh-authorized-keys:
+    - ssh-rsa aaaa....==
+
+package_update: true
+package_upgrade: true
+package_reboot_if_required: true
+packages:
+  - mc
+
+timezone: "Europe/Berlin"
+
+write_files:
+  # set static IP address
+  - content: |
+      # see configuration options via 'man dhcpcd.conf'
+      hostname
+      persistent
+      slaac private
+
+      interface eth0
+      static ip_address=192.168.1.33/24
+      # static ip6_address=fd51:42f8:caae:d92e::ff/64
+      static routers=192.168.1.13
+      static domain_name_servers=192.168.1.13 8.8.8.8
+    path: /etc/dhcpcd.conf
+
+bootcmd:
+  # poor-mans-fix according issue https://github.com/hypriot/image-builder-rpi/issues/304
+  # check also pull request https://github.com/hypriot/flash/pull/152
+  - date >> /var/log/cloud-init-output.log
+  - date -s "2019-12-10 09:15:00"
+
+# these commands will run once on first boot only
+runcmd:
+  # pickup hostname changes
+  - systemctl restart avahi-daemon
+
+  # start dynamic DNS updates
+  - docker run --detach \
+               --name ddclient \
+               --env HOSTNAME=yourdomain.spdns.de \
+               --env UPDATE_TOKEN=fake-example-token \
+               --restart unless-stopped \
+               netzfisch/rpi-dyndns
+
+final_message: "The system is finally up, after $UPTIME seconds"
