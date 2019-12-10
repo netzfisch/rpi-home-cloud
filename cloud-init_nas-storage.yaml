@@ -35,26 +35,39 @@ packages:
   - mdadm
   - samba
   - samba-common-bin
+  - tmux
+  - vim
 
 timezone: "Europe/Berlin"
 #locale: "en_US.UTF-8"
 
-# device_aliases:
-#     <alias name>: <device path>
-# disk_setup:
-#     <alias name/path>:
-#         table_type: <'mbr'/'gpt'>
-#         layout:
-#             - [33,82]
-#             - 66
-#         overwrite: <true/false>
-# fs_setup:
-#     - label: <label>
-#       filesystem: <filesystem type>
-#       device: <device>
-#       partition: <"auto"/"any"/"none"/<partition number>>
-#       overwrite: <true/false>
-#       replace_fs: <filesystem type>
+#device_aliases:
+#    <alias name>: <device path>
+disk_setup:
+    /dev/sda:
+        table_type: mbr
+        layout: true
+        overwrite: false
+fs_setup:
+    - label: ssd1
+      filesystem: 'ext4'
+      device: /dev/sda
+      partition: auto
+      overwrite: false
+#     replace_fs: <filesystem type>
+
+disk_setup:
+    /dev/sdb:
+        table_type: mbr
+        layout: true
+        overwrite: false
+fs_setup:
+    - label: ssd2
+      filesystem: 'ext4'
+      device: /dev/sdb
+      partition: auto
+      overwrite: false
+#     replace_fs: <filesystem type>
 
 write_files:
   # set static IP address
@@ -84,8 +97,8 @@ write_files:
 bootcmd:
   # poor-mans-fix according issue https://github.com/hypriot/image-builder-rpi/issues/304
   # check also pull request https://github.com/hypriot/flash/pull/152
-  - 'date >> /var/log/cloud-init-output.log'
-  - 'date -s "2019-12-09 22:47:00"'
+  - date >> /var/log/cloud-init-output.log
+  - date -s "2019-12-09 22:47:00"
 
 # these commands will run once on first boot only
 runcmd:
