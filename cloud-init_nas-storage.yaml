@@ -28,8 +28,8 @@ users:
     - ssh-rsa aaaa....==
 
 package_update: true
-package_upgrade: false
-package_reboot_if_required: false
+package_upgrade: true
+package_reboot_if_required: true
 packages:
   - mc
   - mdadm
@@ -45,12 +45,12 @@ timezone: "Europe/Berlin"
 #    <alias name>: <device path>
 disk_setup:
     /dev/sda:
-        table_type: mbr
+        table_type: gpt
         layout: true
         overwrite: false
 fs_setup:
     - label: ssd1
-      filesystem: 'ext4'
+      filesystem: ext4
       device: /dev/sda
       partition: auto
       overwrite: false
@@ -58,12 +58,12 @@ fs_setup:
 
 disk_setup:
     /dev/sdb:
-        table_type: mbr
+        table_type: gpt
         layout: true
         overwrite: false
 fs_setup:
     - label: ssd2
-      filesystem: 'ext4'
+      filesystem: ext4
       device: /dev/sdb
       partition: auto
       overwrite: false
@@ -98,12 +98,12 @@ bootcmd:
   # poor-mans-fix according issue https://github.com/hypriot/image-builder-rpi/issues/304
   # check also pull request https://github.com/hypriot/flash/pull/152
   - date >> /var/log/cloud-init-output.log
-  - date -s "2019-12-09 22:47:00"
+  - date -s "2019-12-10 24:00:00"
 
 # these commands will run once on first boot only
 runcmd:
   # pickup hostname changes
-  - 'systemctl restart avahi-daemon'
+  - systemctl restart avahi-daemon
 
   # configure RAID disks
   - mdadm --create --verbose /dev/md0 --level=mirror --raid-devices=2 /dev/sda1 /dev/sdb1
@@ -112,7 +112,7 @@ runcmd:
   - mount /dev/md0 /mnt/raid1/
   - ls -l /mnt/raid1/
 
-  - echo '/dev/md0 /mnt/raid1/ ext4 defaults,noatime 0 1' >> /etc/fstab
+  - echo '/dev/md0 /mnt/raid1/ ext4 defaults,nofail,noatime 0 1' >> /etc/fstab
   - mdadm --detail --scan | tee -a /etc/mdadm/mdadm.conf
 
   # configure SAMBA shares
