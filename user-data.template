@@ -10,8 +10,9 @@
 # USAGE:
 # 1. Copy secrets.env.example to secrets.env
 # 2. Edit secrets.env with your actual configuration
-# 3. Run ./generate-userdata.sh to generate the final user-data file
-# 4. Copy user-data to /media/$USER/system-boot/user-data
+# 3. Make script executable: chmod +x generate-userdata.sh
+# 4. Run ./generate-userdata.sh to generate the final user-data file
+# 5. Copy user-data to /media/$USER/system-boot/user-data
 #
 # More information: https://cloudinit.readthedocs.io/
 # ========================================================================
@@ -52,20 +53,16 @@ users:
   #ssh_authorized_keys:
   #- ssh-ed25519 AAAAC..
   ssh_import_id:
-  - gh:netzfisch
+  - gh:${GITHUB_USER}
   sudo: ALL=(ALL) NOPASSWD:ALL
 - name: ${USER1}
   gecos: ${USER1}
-  groups: sambashare
-  lock_passwd: false
-  inactive: "true"
+  lock_passwd: true
   no_create_home: true
   shell: /usr/sbin/nologin
 - name: ${USER2}
   gecos: ${USER2}
-  groups: sambashare
-  lock_passwd: false
-  inactive: "true"
+  lock_passwd: true
   no_create_home: true
   shell: /usr/sbin/nologin
 
@@ -108,26 +105,26 @@ disk_setup:
     /dev/sda:
         table_type: gpt
         layout: true
-        #overwrite: true
-        overwrite: false
+        overwrite: true
+        #overwrite: false
     /dev/sdb:
         table_type: gpt
         layout: true
-        #overwrite: true
-        overwrite: false
+        overwrite: true
+        #overwrite: false
 fs_setup:
     - label: ssd1
       filesystem: ext4
       device: /dev/sda
       partition: auto
-      #overwrite: true
-      overwrite: false
+      overwrite: true
+      #overwrite: false
     - label: ssd2
       filesystem: ext4
       device: /dev/sdb
       partition: auto
-      #overwrite: true
-      overwrite: false
+      overwrite: true
+      #overwrite: false
 
 write_files:
   # configure console font
@@ -157,6 +154,17 @@ write_files:
       static routers=${GATEWAY_IP}
       static domain_name_servers=${DNS_SERVERS}
     path: /etc/dhcpcd.conf
+
+  # configure midnight commander with lynx-like motion (system-wide)
+  - path: /etc/skel/.config/mc/ini
+    content: |
+      [Midnight-Commander]
+      use_internal_edit=true
+
+      [Panels]
+      navigate_with_arrows=true
+    owner: root:root
+    permissions: '0644'
 
   # configure SAMBA shares
   - content: |
@@ -263,49 +271,102 @@ runcmd:
   - |
     cat > /etc/update-motd.d/99-system-status << 'MOTD_EOF'
     #!/bin/bash
-    echo "═══════════════════════════════════════════════════════════════"
-    echo "       System Status - $(hostname): $(uptime -p)"
-    echo "═══════════════════════════════════════════════════════════════"
-    echo "Load: $(uptime | awk -F'load average:' '{print $2}')" | Memory: $(free -h | awk '/^Mem:/ {printf "%s / %s (%s)", $3, $2, $5}')"
+    echo " ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─"
     echo ""
-    echo "Docker: $(systemctl is-active docker) | Containers: $(docker ps -q 2>/dev/null | wc -l) running"
-    [ $(docker ps -q 2>/dev/null | wc -l) -gt 0 ] && docker ps --format "  • {{.Names}}: {{.Status}}" | head -5
+
+    # Get uptime
+    uptime_info=$(uptime -p | sed 's/up //')
+
+    # Get container count and status
+    docker_status=$(systemctl is-active docker 2>/dev/null || echo "inactive")
+    container_count=$(docker ps -q 2>/dev/null | wc -l)
+
+    # Line 1: Hostname and Uptime
+    printf "  %-28s  %s\n" "Hostname: $(hostname)" "Uptime: $uptime_info"
+
+    # Line 2: Docker status and running containers
+    if [ "$container_count" -gt 0 ]; then
+        containers=$(docker ps --format "{{.Names}}" | tr '\n' ', ' | sed 's/,$//')
+        printf "  %-28s  %s\n" "Docker: $docker_status ($container_count running)" "→ $containers"
+    else
+        printf "  %-28s\n" "Docker: $docker_status ($container_count running)"
+    fi
+
+    # RAID status
+    if grep -q '\[UU\]' /proc/mdstat 2>/dev/null; then
+        raid_status="Healthy [UU]"
+        if mountpoint -q /mnt/raid1 2>/dev/null; then
+            raid_space=$(df -h /mnt/raid1 2>/dev/null | awk 'NR==2 {printf "%s / %s", $3, $2}')
+            printf "  %-28s  %s\n" "RAID: $raid_status" "Storage: $raid_space"
+        else
+            printf "  %-28s\n" "RAID: $raid_status"
+        fi
+    elif grep -q 'resync\|recovery' /proc/mdstat 2>/dev/null; then
+        printf "  %-28s\n" "RAID: SYNCING"
+    else
+        printf "  %-28s\n" "RAID: Check /proc/mdstat"
+    fi
+
+    # Samba status
+    samba_status=$(systemctl is-active smbd 2>/dev/null || echo "inactive")
+    printf "  %-28s\n" "Samba: $samba_status"
+
     echo ""
-    echo "RAID: $(grep -q '\[UU\]' /proc/mdstat 2>/dev/null && echo 'Healthy [UU]' || echo 'Check /proc/mdstat')"
-    mountpoint -q /mnt/raid1 && echo "Space: $(df -h /mnt/raid1 | awk 'NR==2 {printf "%s / %s (%s used)", $3, $2, $5}')"
-    grep -q 'resync\|recovery' /proc/mdstat 2>/dev/null && echo "Status: SYNCING - $(grep -A1 resync /proc/mdstat | tail -1)"
-    echo ""
-    echo "Network: eth0 $(ip -4 addr show eth0 2>/dev/null | grep -oP '(?<=inet\s)\d+(\.\d+){3}')"
-    echo "═══════════════════════════════════════════════════════════════"
     MOTD_EOF
   - chmod +x /etc/update-motd.d/99-system-status
 
+  # Note: Stop and zero any existing RAID metadata to prevent auto-assembly as md127.
+  # These commands work for all scenarios (fresh disks, existing arrays, or mixed states)
+  # due to error suppression (2>/dev/null || true) - they fail gracefully if not needed.
+  - mdadm --stop /dev/md127 2>/dev/null || true
+  - mdadm --zero-superblock /dev/sda1 /dev/sdb1 2>/dev/null || true
   # Create RAID1 storage '/dev/md0' from two USB drives, mount to '/mnt/raid1'
   # and create share directories
-  - mdadm --create --verbose /dev/md0 --level=1 --raid-devices=2 /dev/sda /dev/sdb
-  - mkfs.ext4 /dev/md0
+  - mdadm --create --run --verbose /dev/md0 --level=1 --raid-devices=2 /dev/sda1 /dev/sdb1
+  - mkfs.ext4 -F /dev/md0
   - mkdir -p /mnt/raid1
   - mount /dev/md0 /mnt/raid1
-  - mkdir -p /mnt/raid1/{${USER1},${USER2},shared,public}
+  - echo '/dev/md0 /mnt/raid1 ext4 defaults,nofail,noatime 0 1' >> /etc/fstab
+  - mdadm --detail --scan | tee -a /etc/mdadm/mdadm.conf
+  - update-initramfs -u
+  - mkdir -p /mnt/raid1/${USER1}
+  - mkdir -p /mnt/raid1/${USER2}
+  - mkdir -p /mnt/raid1/shared
+  - mkdir -p /mnt/raid1/public
   - chown -R ${USER1}:sambashare /mnt/raid1/${USER1}
   - chown -R ${USER2}:sambashare /mnt/raid1/${USER2}
   - chown -R pirate:sambashare /mnt/raid1/shared
-  - chmod -R 2770 /mnt/raid1/{${USER1},${USER2},shared}
+  - chmod -R 2770 /mnt/raid1/${USER1}
+  - chmod -R 2770 /mnt/raid1/${USER2}
+  - chmod -R 2770 /mnt/raid1/shared
   - chmod -R 2775 /mnt/raid1/public
 
-  # Set Samba passwords
+  # Add users to sambashare group and set Samba passwords
+  - usermod -a -G sambashare ${USER1}
+  - usermod -a -G sambashare ${USER2}
   - (echo ${USER1_SAMBA_PASSWORD}; echo ${USER1_SAMBA_PASSWORD}) | smbpasswd -a ${USER1} -s
   - (echo ${USER2_SAMBA_PASSWORD}; echo ${USER2_SAMBA_PASSWORD}) | smbpasswd -a ${USER2} -s
 
-  # set up dynamic DNS updater
-  - docker run --name ddclient --env HOSTNAME=${DDNS_HOSTNAME} --env UPDATE_TOKEN=${DDNS_TOKEN} --restart unless-stopped --detach netzfisch/rpi-dyndns
+  # set up dynamic DNS updater (wait for Docker to be ready)
+  #- timeout 60 sh -c 'until docker info >/dev/null 2>&1; do sleep 1; done'
+  - docker run --name ddclient \
+               --env HOSTNAME=${DDNS_HOSTNAME} \
+               --env UPDATE_TOKEN=${DDNS_TOKEN} \
+               --restart unless-stopped \
+               --detach netzfisch/rpi-dyndns
  
   # set up Unifi controller
   - mkdir -p /opt/unifi
   - systemctl enable --now /opt/unifi/unifi.service
 
   # set up VPN server
-  #- docker run --name vpnserver --cap-add NET_ADMIN --publish 500:500/udp --publish 4500:4500/udp --volume /mnt/raid1/shared/configs/vpn:/mnt --restart unless-stopped --detach netzfisch/rpi-vpn-server
+  #- docker run --name vpnserver \
+  #             --cap-add NET_ADMIN \
+  #             --publish 500:500/udp \
+  #             --publish 4500:4500/udp \
+  #             --volume /mnt/raid1/shared/configs/vpn:/mnt \
+  #             --restart unless-stopped \
+  #             --detach netzfisch/rpi-vpn-server
 
 final_message: "The system is finally up, after $UPTIME seconds"
 
