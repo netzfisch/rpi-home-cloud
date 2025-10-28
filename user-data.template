@@ -277,26 +277,24 @@ runcmd:
     # Get uptime
     uptime_info=$(uptime -p | sed 's/up //')
 
+    # Get RAID space
+    raid_space=$(df -h /mnt/raid1 2>/dev/null | awk 'NR==2 {printf "%s / %s", $3, $2}')
+
     # Get container count and status
     docker_status=$(systemctl is-active docker 2>/dev/null || echo "inactive")
     container_count=$(docker ps -q 2>/dev/null | wc -l)
 
+    # Get Samba count and shares (exclude default sections like [homes], [printers])
+    share_count=$(grep -c '^\[' /etc/samba/smb.conf 2>/dev/null || echo "0")
+    share_names=$(grep '^\[' /etc/samba/smb.conf | sed 's/^\[//;s/\]$//' | grep -Ev '^(global|homes|printers)$' | tr '\n' ', ' | sed 's/,$//')
+
     # Line 1: Hostname and Uptime
     printf "  %-28s  %s\n" "Hostname: $(hostname)" "Uptime: $uptime_info"
 
-    # Line 2: Docker status and running containers
-    if [ "$container_count" -gt 0 ]; then
-        containers=$(docker ps --format "{{.Names}}" | tr '\n' ', ' | sed 's/,$//')
-        printf "  %-28s  %s\n" "Docker: $docker_status ($container_count running)" "→ $containers"
-    else
-        printf "  %-28s\n" "Docker: $docker_status ($container_count running)"
-    fi
-
-    # RAID status
+    # Line 2: RAID status
     if grep -q '\[UU\]' /proc/mdstat 2>/dev/null; then
         raid_status="Healthy [UU]"
         if mountpoint -q /mnt/raid1 2>/dev/null; then
-            raid_space=$(df -h /mnt/raid1 2>/dev/null | awk 'NR==2 {printf "%s / %s", $3, $2}')
             printf "  %-28s  %s\n" "RAID: $raid_status" "Storage: $raid_space"
         else
             printf "  %-28s\n" "RAID: $raid_status"
@@ -307,9 +305,25 @@ runcmd:
         printf "  %-28s\n" "RAID: Check /proc/mdstat"
     fi
 
-    # Samba status
+    # Line 3: Docker status and running containers
+    if [ "$container_count" -gt 0 ]; then
+        containers=$(docker ps --format "{{.Names}}" | tr '\n' ', ' | sed 's/,$//')
+        printf "  %-28s  %s\n" "Docker: $docker_status ($container_count running)" "→ $containers"
+    else
+        printf "  %-28s\n" "Docker: $docker_status ($container_count running)"
+    fi
+
+    # Line 4: Samba status
     samba_status=$(systemctl is-active smbd 2>/dev/null || echo "inactive")
-    printf "  %-28s\n" "Samba: $samba_status"
+    if [ "$samba_status" = "active" ]; then
+        if [ -n "$share_names" ]; then
+            printf "  %-28s  %s\n" "Samba: $samba_status ($share_count shares)" "→ $share_names"
+        else
+            printf "  %-28s\n" "Samba: $samba_status"
+        fi
+    else
+        printf "  %-28s\n" "Samba: $samba_status"
+    fi
 
     echo ""
     MOTD_EOF
@@ -354,7 +368,7 @@ runcmd:
                --env UPDATE_TOKEN=${DDNS_TOKEN} \
                --restart unless-stopped \
                --detach netzfisch/rpi-dyndns
- 
+
   # set up Unifi controller
   - mkdir -p /opt/unifi
   - systemctl enable --now /opt/unifi/unifi.service
