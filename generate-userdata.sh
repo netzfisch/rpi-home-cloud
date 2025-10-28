@@ -40,6 +40,7 @@ EXAMPLE="secrets.env.example"
 # List of all required variables that must be defined in secrets.env
 REQUIRED_VARS=(
     HOSTNAME
+    GITHUB_USER
     USER1
     USER1_SAMBA_PASSWORD
     USER2
@@ -65,7 +66,7 @@ check_files_exist() {
 validate_variables() {
     local missing_vars=()
     local placeholder_vars=()
-    
+
     # Check each required variable
     for var in "${REQUIRED_VARS[@]}"; do
         if [[ -z "${!var:-}" ]]; then
@@ -76,12 +77,12 @@ validate_variables() {
             placeholder_vars+=("$var=${!var}")
         fi
     done
-    
+
     # Abort if any variables are missing
     if [[ ${#missing_vars[@]} -gt 0 ]]; then
         err "Missing variables:\n$(printf '  - %s\n' "${missing_vars[@]}")"
     fi
-    
+
     # Warn about placeholder values and ask for confirmation
     if [[ ${#placeholder_vars[@]} -gt 0 ]]; then
         warn "Found placeholder values:\n$(printf '  - %s\n' "${placeholder_vars[@]}")\n"
@@ -97,9 +98,9 @@ validate_variables() {
 # Validate generated file with cloud-init schema
 validate_cloud_init_schema() {
     command -v cloud-init &>/dev/null || return 0  # Skip if not installed
-    
+
     info "Validating cloud-init schema..."
-    
+
     if cloud-init schema --config-file "$OUTPUT" 2>&1 | grep -q "Valid schema"; then
         ok "Cloud-init schema validation passed"
     else
@@ -115,23 +116,24 @@ validate_cloud_init_schema() {
 main() {
     # Step 1: Check that required files exist
     check_files_exist
-    
+
     # Step 2: Load secrets from file
     info "Reading secrets from $SECRETS..."
     source "$SECRETS"
-    
+
     # Step 3: Validate all required variables
     validate_variables
-    
+
     # Step 4: Render template with variable substitution
     info "Rendering $TEMPLATE → $OUTPUT..."
     export "${REQUIRED_VARS[@]}"
-    envsubst < "$TEMPLATE" > "$OUTPUT"
+    # Only substitute our variables, preserve cloud-init variables like $RELEASE and $UPTIME
+    envsubst "$(printf '${%s} ' "${REQUIRED_VARS[@]}")" < "$TEMPLATE" > "$OUTPUT"
     ok "Successfully rendered $OUTPUT"
-    
+
     # Step 5: Validate generated configuration
     validate_cloud_init_schema
-    
+
     # Step 6: Show next steps to user
     echo ""
     ok "Done! Next steps:"
